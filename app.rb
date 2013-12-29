@@ -1,56 +1,31 @@
-require "coffee-script"
+require "base64"
 require "digest/sha1"
-require "haml"
 require "fog"
+require "json"
+require "openssl"
 require "pry" if ENV["RACK_ENV"] == "development"
 require "sinatra"
 require "tempfile"
 
 configure do
-  storage = Fog::Storage.new({
-    :provider => 'AWS',
-    :aws_access_key_id => ENV["ACCESS_KEY_ID"],
-    :aws_secret_access_key => ENV["SECRET_ACCESS_KEY"],
-  })
+  set :aws_access_key_id, ENV["ACCESS_KEY_ID"]
+  set :aws_secret_key, ENV["SECRET_ACCESS_KEY"]
 
   set :bucket, ENV["AWS_BUCKET"]
+
+  storage = Fog::Storage.new({
+    :provider => 'AWS',
+    :aws_access_key_id => settings.aws_access_key_id,
+    :aws_secret_access_key => settings.aws_secret_key,
+  })
 
   set :storage, storage
 end
 
-%w[
-  editor
-  game
-  sifter
-  slicer
-  tiler
-  uploader
-].each do |component|
-  get "/#{component}" do
-    haml "%script(src='/#{component}.js')"
-  end
-end
-
-get "/" do
-  haml :editor
-end
-
-post "/upload" do
+post "/" do
   if data = params[:data]
-    if data.is_a? String
-      content_type = params[:type]
-      file = Tempfile.new ["data", ".json"]
-      file.write data
-      file.rewind
-    else
-      file = data[:tempfile]
-      content_type = data[:type]
-    end
-  elsif data = params[:data_base64]
-    content_type = params[:type]
-    file = Tempfile.new ["image", ".png"], :encoding => 'ascii-8bit'
-    file.write Base64.decode64(data)
-    file.rewind
+    file = data[:tempfile]
+    content_type = data[:type]
   else
     return 400
   end
@@ -58,6 +33,29 @@ post "/upload" do
   store(file, content_type)
 
   200
+end
+
+get "/policy.json" do
+  max_size = 10 * 1024 * 1024
+  policy_document = {
+    expiration: "2020-12-01T12:00:00.000Z",
+    conditions: [
+      { bucket: settings.bucket},
+      ["starts-with", "$key", ""],
+      { acl: "public"},
+      ["starts-with", "$Content-Type", ""],
+      ["content-length-range", 0, max_size]
+    ]
+  }.to_json
+
+  encoded_policy_document = Base64.encode64(policy_document).gsub("\n","")
+
+  content_type :json
+
+  {
+    :policy => encoded_policy_document,
+    :signature => sign_policy(encoded_policy_document)
+  }.to_json
 end
 
 def directory
@@ -82,32 +80,12 @@ def store(file, content_type=nil)
   end
 end
 
-__END__
-@@layout
-!!!
-%html
-  %head
-    %meta(charset="utf-8")
-
-    %link(rel="stylesheet" type="text/css" href="/pixie.css")
-    %link(rel="stylesheet" type="text/css" href="/main.css")
-
-    %script(src="//ajax.googleapis.com/ajax/libs/jquery/1.10.1/jquery.min.js")
-    %script(src="/coffee-script.js")
-    %script(src="/jquery.gritter.min.js")
-    %script(src="/sha1.js")
-    %script(src="/enc-base64-min.js")
-    %script(src="/pixie.js")
-    %script(src="/underscore-min.js")
-    %script(src="/main.js")
-    %script(src="/templates.js")
-
-  %body
-    = yield
-
-    %form#console
-      %textarea
-      %button Run
-
-@@editor
-%script(src="/editor.js")
+def sign_policy(base64_encoded_policy_document)
+  signature = Base64.encode64(
+    OpenSSL::HMAC.digest(
+      OpenSSL::Digest::Digest.new('sha1'),
+      settings.aws_secret_key,
+      base64_encoded_policy_document
+    )
+  ).gsub("\n","")
+end
