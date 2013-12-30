@@ -5,7 +5,16 @@ require "json"
 require "openssl"
 require "pry" if ENV["RACK_ENV"] == "development"
 require "sinatra"
-require "tempfile"
+require "unf"
+
+require "rack/cors"
+
+use Rack::Cors do |config|
+  config.allow do |allow|
+    allow.origins '*'
+    allow.resource '*', :headers => :any
+  end
+end
 
 configure do
   set :aws_access_key_id, ENV["ACCESS_KEY_ID"]
