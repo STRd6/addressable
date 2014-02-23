@@ -1,22 +1,18 @@
-task :default => [:build]
+task :empty_bucket do
+  require 'fog'
+  require 'pry'
 
-task :build do
-  src_files = Dir["source/*.coffee"]
-  sh "coffee", "-bcj", "public/main.js", *src_files
+  storage = Fog::Storage.new({
+    :provider => 'AWS',
+    :aws_access_key_id => ENV["ACCESS_KEY_ID"],
+    :aws_secret_access_key => ENV["SECRET_ACCESS_KEY"],
+  })
 
-  %w[
-    editor
-    game
-    slicer
-    sifter
-    tiler
-    uploader
-  ].each do |subdir|
-    src_files = Dir["source/#{subdir}/*.coffee"]
-    sh "coffee", "-bcj", "public/#{subdir}.js", *src_files
-  end
+  bucket = ENV["AWS_BUCKET"]
 
-  sh "cat source/*.styl | stylus > public/main.css"
+  directory = storage.directories.get(bucket)
 
-  sh "haml-coffee -i source/templates/ -o public/templates.js -b true"
+  files = directory.files.map(&:key)
+
+  storage.delete_multiple_objects(bucket, files)
 end
