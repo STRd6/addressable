@@ -12,7 +12,8 @@ require "rack/cors"
 use Rack::Cors do |config|
   config.allow do |allow|
     allow.origins '*'
-    allow.resource '*', :headers => :any
+    allow.resource '*',
+      :headers => :any
   end
 end
 
@@ -39,7 +40,7 @@ post "/" do
     return 400
   end
 
-  store(file, content_type)
+  store(file, content_type, params[:namespace])
 
   200
 end
@@ -71,14 +72,23 @@ def directory
   settings.storage.directories.get(settings.bucket)
 end
 
-def store(file, content_type=nil)
+def store(file, content_type=nil, namespace=nil)
   sha1 = Digest::SHA1.file(file.path).hexdigest
 
-  if directory.files.get(sha1)
-    # Already stored, do nothing
+  if namespace
+    key = "#{namespace}/#{sha1}"
   else
+    key = sha1
+  end
+
+  if directory.files.get(key)
+    # Already stored, do nothing
+    logger.info "already stored at #{key}"
+  else
+    logger.info "storing at #{key}"
+
     directory.files.create(
-      :key => sha1,
+      :key => key,
       :body => file,
       :content_type => content_type,
       :public => true,
